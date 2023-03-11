@@ -1,8 +1,21 @@
 <?php
-$server_check_version = '1.0.5';
-$start_time = microtime(TRUE);
+function wmic($alias = '', $method = '', $default = false, $verb = 'get') {
+	if (!empty(trim($alias)) && !empty(trim($alias)) && !empty(trim($alias)))
+	{
+		@exec("wmic " . $alias . " " . $verb . " " . $method . ($verb == "get" ? " /value" : ""), $output);
 
-$operating_system = PHP_OS_FAMILY;
+		$output = is_array($output) ? array_values(array_filter($output)) : false;
+
+		if ($output) foreach ($output as $line) if (preg_match("/" . $method . "=" . "/i",trim($line))) return trim(str_ireplace($method . "=","",$line));
+	}
+
+	return $default;
+}
+
+if (!defined('SERVERCHECK_AS_LIB')) {
+	$server_check_version = '1.0.6';
+	$start_time = microtime(TRUE);
+}
 
 $cpuload = 0;
 $cpu_count = 0;
@@ -10,7 +23,7 @@ $memavailable = 0;
 $memused = 0;
 $memtotal = 0;
 
-if ($operating_system === 'Windows') {
+if (PHP_OS_FAMILY === 'Windows') {
 	// I don't know if is really this extension name
 	if (extension_loaded('COM')) {
 		// Win CPU
@@ -26,76 +39,16 @@ if ($operating_system === 'Windows') {
 		$memtotal = $mem->TotalVisibleMemorySize;
 		$memavailable = $mem->FreePhysicalMemory;
 	} else {
-			// CPU Threads
-			@exec("wmic cpu get numberoflogicalprocessors", $output);
+		// CPU Threads
+		$cpu_count = intval(wmic("cpu","numberoflogicalprocessors",0));
 
-			if (is_array($output)) {
-				$output = array_values(array_filter($output));
-				$has_header = false;
+		// CPU load
+		$cpuload = intval(wmic("cpu","loadpercentage",0));
 
-				foreach ($output as $line) {
-					$line = trim($line);
-
-					if (line && preg_match("/numberoflogicalprocessors/", strtolower($line))) {
-						$has_header = TRUE;
-						continue;
-					}
-
-					if ($has_header && preg_match("/^[0-9]+$/", $line)) {
-						$cpu_count = intval($line);
-						break;
-					}
-				}
-			}
-
-			// CPU load
-			@exec("wmic cpu get loadpercentage /all", $output);
-
-			if (is_array($output)) {
-				$output = array_values(array_filter($output));
-				$has_header = false;
-
-				foreach ($output as $line) {
-					$line = trim($line);
-
-					if (line && preg_match("/loadpercentage/", strtolower($line))) {
-						$has_header = TRUE;
-						continue;
-					}
-
-					if ($has_header && preg_match("/^[0-9]+$/", $line)) {
-						$cpuload = intval($line);
-						break;
-					}
-				}
-			}
-
-			// Memory usage
-			@exec("wmic ComputerSystem get TotalPhysicalMemory", $outputTotalPhysicalMemory);
-			@exec("wmic OS get FreePhysicalMemory", $outputFreePhysicalMemory);
-
-			if ($outputTotalPhysicalMemory && $outputFreePhysicalMemory) {
-				// Find total value
-				foreach ($outputTotalPhysicalMemory as $line) {
-					$line = trim($line);
-
-					if ($line && preg_match("/^[0-9]+\$/", $line)) {
-						$memtotal = intval($line);
-						break;
-					}
-				}
-
-				// Find free value
-				foreach ($outputFreePhysicalMemory as $line) {
-					$line = trim($line);
-
-					if ($line && preg_match("/^[0-9]+\$/", $line)) {
-						$memavailable = intval($line);
-						$memavailable *= 1024;  // convert from kibibytes to bytes
-						break;
-					}
-				}
-			}
+		// Memory usage
+		$memtotal = intval(wmic("ComputerSystem","TotalPhysicalMemory",0));
+		$memavailable = intval(wmic("OS","FreePhysicalMemory",0));
+		if ($memavailable > 0) $memavailable *= 1024;
 	}
 
 	$memtotal = $memtotal > 0 ? round($memtotal / 1000000,2) : 0.0;
@@ -112,8 +65,9 @@ if ($operating_system === 'Windows') {
 	$totalconnections = is_numeric($totalconnections) ? intval($totalconnections) : 0;
 } else {
 	// Linux CPU
-	$load = sys_getloadavg();
-	$cpuload = $load[0];
+	$cpuload = sys_getloadavg()[0] * 100;
+    $cpuload > 100 ? 100 : ($cpuload < 0 ? 0 : $cpuload);
+
 	$cpu_count = shell_exec('nproc');
 	// Linux MEM
 	$free = shell_exec('free');
@@ -143,17 +97,19 @@ $diskused = round($disktotal - $diskfree);
 
 $diskusage = round($diskused/$disktotal*100);
 
-if ($memusage > 85 || $cpuload > 85 || $diskusage > 85) {
-	$trafficlight = 'red';
-} elseif ($memusage > 50 || $cpuload > 50 || $diskusage > 50) {
-	$trafficlight = 'orange';
-} else {
-	$trafficlight = '#2F2';
-}
+if (!defined('SERVERCHECK_AS_LIB')) {
+	if ($memusage > 85 || $cpuload > 85 || $diskusage > 85) {
+		$trafficlight = 'red';
+	} elseif ($memusage > 50 || $cpuload > 50 || $diskusage > 50) {
+		$trafficlight = 'orange';
+	} else {
+		$trafficlight = '#2F2';
+	}
 
-$end_time = microtime(TRUE);
-$time_taken = $end_time - $start_time;
-$total_time = round($time_taken,4);
+	$end_time = microtime(TRUE);
+	$time_taken = $end_time - $start_time;
+	$total_time = round($time_taken,4);
+}
 
 $server_check = array(
 	'ram_usage' => $memusage, 'cpu_load' => $cpuload, 'disk_usage' => $diskusage,
@@ -162,7 +118,6 @@ $server_check = array(
 	'ram_total' => $memtotal, 'ram_used' => $memused, 'ram_available' => $memavailable,
 	'disk_free' => $diskfree, 'disk_used' => $diskused, 'disk_total' => $disktotal,
 	'php_load' => $phpload,
-	'load_time' => $total_time
 );
 
 if (defined('SERVERCHECK_AS_LIB')) return $server_check;
@@ -245,31 +200,33 @@ hr {
 </style>
 </head>
 <body>
-	<div id="trafficlight" class="nodark"></div>
+	<div id="container">
+		<div id="trafficlight" class="nodark"></div>
 
-	<p><span class="description big">🌡️ RAM Usage:</span> <span class="result big"><?php echo $memusage; ?>%</span></p>
-	<p><span class="description big">🖥️ CPU Usage: </span> <span class="result big"><?php echo $cpuload; ?>%</span></p>
-	<p><span class="description">💽 Hard Disk Usage: </span> <span class="result"><?php echo $diskusage; ?>%</span></p>
-	<p><span class="description">🖧 Established Connections: </span> <span class="result"><?php echo $connections; ?></span></p>
-	<p><span class="description">🖧 Total Connections: </span> <span class="result"><?php echo $totalconnections; ?></span></p>
-	<hr>
-	<p><span class="description">🖥️ CPU Threads:</span> <span class="result"><?php echo $cpu_count; ?></span></p>
-	<hr>
-	<p><span class="description">🌡️ RAM Total:</span> <span class="result"><?php echo $memtotal; ?> MB</span></p>
-	<p><span class="description">🌡️ RAM Used:</span> <span class="result"><?php echo $memused; ?> MB</span></p>
-	<p><span class="description">🌡️ RAM Available:</span> <span class="result"><?php echo $memavailable; ?> MB</span></p>
-	<hr>
-	<p><span class="description">💽 Hard Disk Free:</span> <span class="result"><?php echo $diskfree; ?> GB</span></p>
-	<p><span class="description">💽 Hard Disk Used:</span> <span class="result"><?php echo $diskused; ?> GB</span></p>
-	<p><span class="description">💽 Hard Disk Total:</span> <span class="result"><?php echo $disktotal; ?> GB</span></p>
-	<hr>
-	<div id="details">
-		<p><span class="description">📟 Server Name: </span> <span class="result"><?php echo $_SERVER['SERVER_NAME']; ?></span></p>
-		<p><span class="description">💻 Server Addr: </span> <span class="result"><?php echo $_SERVER['SERVER_ADDR']; ?></span></p>
-		<p><span class="description">🌀 PHP Version: </span> <span class="result"><?php echo phpversion(); ?></span></p>
-		<p><span class="description">🏋️ PHP Load: </span> <span class="result"><?php echo $phpload; ?> MB</span></p>
+		<p><span class="description big">🌡️ RAM Usage:</span> <span class="result big"><?php echo $memusage; ?>%</span></p>
+		<p><span class="description big">🖥️ CPU Usage: </span> <span class="result big"><?php echo $cpuload; ?>%</span></p>
+		<p><span class="description">💽 Hard Disk Usage: </span> <span class="result"><?php echo $diskusage; ?>%</span></p>
+		<p><span class="description">🖧 Established Connections: </span> <span class="result"><?php echo $connections; ?></span></p>
+		<p><span class="description">🖧 Total Connections: </span> <span class="result"><?php echo $totalconnections; ?></span></p>
+		<hr>
+		<p><span class="description">🖥️ CPU Threads:</span> <span class="result"><?php echo $cpu_count; ?></span></p>
+		<hr>
+		<p><span class="description">🌡️ RAM Total:</span> <span class="result"><?php echo $memtotal; ?> MB</span></p>
+		<p><span class="description">🌡️ RAM Used:</span> <span class="result"><?php echo $memused; ?> MB</span></p>
+		<p><span class="description">🌡️ RAM Available:</span> <span class="result"><?php echo $memavailable; ?> MB</span></p>
+		<hr>
+		<p><span class="description">💽 Hard Disk Free:</span> <span class="result"><?php echo $diskfree; ?> GB</span></p>
+		<p><span class="description">💽 Hard Disk Used:</span> <span class="result"><?php echo $diskused; ?> GB</span></p>
+		<p><span class="description">💽 Hard Disk Total:</span> <span class="result"><?php echo $disktotal; ?> GB</span></p>
+		<hr>
+		<div id="details">
+			<p><span class="description">📟 Server Name: </span> <span class="result"><?php echo $_SERVER['SERVER_NAME']; ?></span></p>
+			<p><span class="description">💻 Server Addr: </span> <span class="result"><?php echo $_SERVER['SERVER_ADDR']; ?></span></p>
+			<p><span class="description">🌀 PHP Version: </span> <span class="result"><?php echo phpversion(); ?></span></p>
+			<p><span class="description">🏋️ PHP Load: </span> <span class="result"><?php echo $phpload; ?> MB</span></p>
 
-		<p><span class="description">⏱️ Load Time: </span> <span class="result"><?php echo $total_time; ?> sec</span></p>
+			<p><span class="description">⏱️ Load Time: </span> <span class="result"><?php echo $total_time; ?> sec</span></p>
+		</div>
 	</div>
 <footer>
 	<div class="footer">
